@@ -30,10 +30,10 @@ jobs:
 
     - name: Build the Docker image
       run: |
-        docker build --no-cache . --file Dockerfile --tag jlevangie/lazydj:${{ env.IMAGE_TAG }} --tag jlevangie/lazydj:latest
+        docker build --no-cache . --file Dockerfile --tag jlevangie/colmi-ring-to-influxdb:${{ env.IMAGE_TAG }} --tag jlevangie/colmi-ring-to-influxdb:latest
 
     - name: Push the Docker image with timestamp tag
-      run: docker push jlevangie/lazydj:${{ env.IMAGE_TAG }}
+      run: docker push jlevangie/colmi-ring-to-influxdb:${{ env.IMAGE_TAG }}
 
     - name: Push the Docker image with latest tag
-      run: docker push jlevangie/lazydj:latest
+      run: docker push jlevangie/colmi-ring-to-influxdb:latest
