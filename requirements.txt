@@ -1,2 +1,2 @@
-webdavclient3
 influxdb-client
+python-dotenv
