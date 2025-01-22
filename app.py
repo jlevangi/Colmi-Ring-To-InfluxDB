@@ -108,13 +108,45 @@ def extract_data(cur):
 
     res = cur.execute(data_query)
     for r in res.fetchall():
-        row_ts = r[0] * 1000000  # Convert to nanoseconds
+        start_ts = r[0] * 1000000  # Convert to nanoseconds
         wakeup_ts = r[2] * 1000000  # Convert to nanoseconds
-        time_slept = (r[2] - r[0]) * 1000  # time slept in milliseconds
+        total_sleep_time = wakeup_ts - start_ts  # total sleep time in nanoseconds
+        
+        # Generate time slept values in 15-minute increments
+        increment = 15 * 60 * 1000000000  # 15 minutes in nanoseconds
+        current_ts = start_ts
+        while current_ts + increment <= wakeup_ts:
+            row = {
+                    "timestamp": current_ts,
+                    "fields" : {
+                        "time_slept" : int(increment / 1000000)  # Convert to milliseconds and ensure integer type
+                    },
+                    "tags" : {
+                        "device" : devices[f"dev-{r[1]}"]
+                    }
+            }
+            results.append(row)
+            current_ts += increment
+
+        # Add the remaining sleep time
+        if current_ts < wakeup_ts:
+            remaining_time = wakeup_ts - current_ts
+            row = {
+                    "timestamp": current_ts,
+                    "fields" : {
+                        "time_slept" : int(remaining_time / 1000000)  # Convert to milliseconds and ensure integer type
+                    },
+                    "tags" : {
+                        "device" : devices[f"dev-{r[1]}"]
+                    }
+            }
+            results.append(row)
+
+        # Add the final wakeup time point
         row = {
-                "timestamp": row_ts,
+                "timestamp": wakeup_ts,
                 "fields" : {
-                    "time_slept" : time_slept
+                    "wakeup_time" : wakeup_ts
                 },
                 "tags" : {
                     "device" : devices[f"dev-{r[1]}"]
@@ -178,7 +210,7 @@ def extract_data(cur):
 
     # Get activity data
     print("Querying activity data...")
-    data_query = ("SELECT TIMESTAMP, DEVICE_ID, STEPS FROM COLMI_ACTIVITY_SAMPLE "
+    data_query = ("SELECT TIMESTAMP, DEVICE_ID, STEPS, DISTANCE, CALORIES FROM COLMI_ACTIVITY_SAMPLE "
         f"WHERE TIMESTAMP >= {query_start_bound} "
         "AND DEVICE_ID IN (" + ",".join([k.split('-')[1] for k in devices.keys()]) + ") "
         "ORDER BY TIMESTAMP ASC")
@@ -189,7 +221,9 @@ def extract_data(cur):
         row = {
                 "timestamp": row_ts,
                 "fields" : {
-                    "activity" : r[2]
+                    "activity_steps" : r[2],
+                    "activity_distance" : r[3],
+                    "activity_calories" : r[4]
                 },
                 "tags" : {
                     "device" : devices[f"dev-{r[1]}"]
@@ -200,6 +234,31 @@ def extract_data(cur):
             devices_observed[f"dev-{r[1]}"] = row_ts
 
     print("Activity data points:", len(results))
+
+    # Get SPO2 data
+    print("Querying SPO2 data...")
+    data_query = ("SELECT TIMESTAMP, DEVICE_ID, SPO2 FROM COLMI_SPO2_SAMPLE "
+        f"WHERE TIMESTAMP >= {query_start_bound} "
+        "AND DEVICE_ID IN (" + ",".join([k.split('-')[1] for k in devices.keys()]) + ") "
+        "ORDER BY TIMESTAMP ASC")
+
+    res = cur.execute(data_query)
+    for r in res.fetchall():
+        row_ts = r[0] * 1000000  # Convert to nanoseconds
+        row = {
+                "timestamp": row_ts,
+                "fields" : {
+                    "spo2" : r[2]
+                },
+                "tags" : {
+                    "device" : devices[f"dev-{r[1]}"]
+                }
+        }
+        results.append(row)
+        if f"dev-{r[1]}" not in devices_observed or devices_observed[f"dev-{r[1]}"] < row_ts:
+            devices_observed[f"dev-{r[1]}"] = row_ts
+
+    print("SPO2 data points:", len(results))
 
     # Get heart rate data
     print("Querying heart rate data...")
@@ -269,6 +328,18 @@ def write_results(results):
                     print(f"Successfully wrote point: {p}")
                 except Exception as e:
                     print(f"Failed to write point: {p}, error: {e}")
+                
+                # Write wakeup time as a separate point
+                if 'wakeup_time' in row['fields']:
+                    p_wakeup = Point(INFLUXDB_MEASUREMENT)
+                    p_wakeup = p_wakeup.tag("device", row['tags']['device'])
+                    p_wakeup = p_wakeup.field("wakeup_time", row['fields']['wakeup_time'])
+                    p_wakeup = p_wakeup.time(row['fields']['wakeup_time'])
+                    try:
+                        _write_client.write(INFLUXDB_BUCKET, INFLUXDB_ORG, p_wakeup)
+                        print(f"Successfully wrote wakeup point: {p_wakeup}")
+                    except Exception as e:
+                        print(f"Failed to write wakeup point: {p_wakeup}, error: {e}")
 
 if __name__ == "__main__":
     print("Starting script...")
