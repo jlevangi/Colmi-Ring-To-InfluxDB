@@ -12,6 +12,8 @@ import time
 from influxdb_client import InfluxDBClient, Point
 from influxdb_client.client.write_api import SYNCHRONOUS
 from dotenv import load_dotenv
+from watchdog.observers import Observer
+from watchdog.events import FileSystemEventHandler
 
 load_dotenv()  # Load environment variables from .env file
 
@@ -341,12 +343,16 @@ def write_results(results):
                     except Exception as e:
                         print(f"Failed to write wakeup point: {p_wakeup}, error: {e}")
 
-if __name__ == "__main__":
-    print("Starting script...")
-    if not INFLUXDB_URL:
-        print("Error: INFLUXDB_URL not set in environment")
-        sys.exit(1)
+class FileChangeHandler(FileSystemEventHandler):
+    def __init__(self, sync_function):
+        self.sync_function = sync_function
 
+    def on_modified(self, event):
+        if event.src_path == LOCAL_PATH:
+            print(f"{LOCAL_PATH} has been modified. Running sync job...")
+            self.sync_function()
+
+def run_sync_job():
     tempdir = fetch_database()
     print(f"Fetched database to temporary directory: {tempdir}")
     conn, cur = open_database(tempdir)
@@ -356,7 +362,7 @@ if __name__ == "__main__":
     results = extract_data(cur)
     if not results:
         print("Data extraction failed")
-        sys.exit(1)
+        return
 
     print(f"Extracted {len(results)} data points")
 
@@ -371,3 +377,21 @@ if __name__ == "__main__":
         print(f"Removed temporary directory: {tempdir}")
     elif REMOVE_TEMP_DB == "N":
         print(f"Temporary directory retained: {tempdir}")
+
+if __name__ == "__main__":
+    print("Starting script...")
+    if not INFLUXDB_URL:
+        print("Error: INFLUXDB_URL not set in environment")
+        sys.exit(1)
+
+    event_handler = FileChangeHandler(run_sync_job)
+    observer = Observer()
+    observer.schedule(event_handler, path=os.path.dirname(LOCAL_PATH), recursive=False)
+    observer.start()
+
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        observer.stop()
+    observer.join()
