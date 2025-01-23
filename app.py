@@ -343,14 +343,23 @@ def write_results(results):
                     except Exception as e:
                         print(f"Failed to write wakeup point: {p_wakeup}, error: {e}")
 
-class FileChangeHandler(FileSystemEventHandler):
-    def __init__(self, sync_function):
-        self.sync_function = sync_function
-
-    def on_modified(self, event):
-        if event.src_path == LOCAL_PATH:
-            print(f"{LOCAL_PATH} has been modified. Running sync job...")
-            self.sync_function()
+def monitor_file(file_path, sync_function, poll_interval=1):
+    last_modified = os.path.getmtime(file_path)
+    
+    while True:
+        try:
+            current_modified = os.path.getmtime(file_path)
+            
+            if current_modified != last_modified:
+                print(f"File {file_path} modified. Running sync job...")
+                sync_function()
+                last_modified = current_modified
+            
+            time.sleep(poll_interval)
+        
+        except Exception as e:
+            print(f"Error monitoring file: {e}")
+            break
 
 def run_sync_job():
     tempdir = fetch_database()
@@ -384,14 +393,12 @@ if __name__ == "__main__":
         print("Error: INFLUXDB_URL not set in environment")
         sys.exit(1)
 
-    event_handler = FileChangeHandler(run_sync_job)
-    observer = Observer()
-    observer.schedule(event_handler, path=os.path.dirname(LOCAL_PATH), recursive=False)
-    observer.start()
+    print("Checking LOCAL_PATH directory...")
+    # Ensure the LOCAL_PATH directory exists
+    if not os.path.exists(os.path.dirname(LOCAL_PATH)):
+        print(f"Error: Directory {os.path.dirname(LOCAL_PATH)} does not exist")
+        sys.exit(1)
 
-    try:
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        observer.stop()
-    observer.join()
+    print("Starting file monitoring...")
+    monitor_file(LOCAL_PATH, run_sync_job)
+    print("Script terminated.")
