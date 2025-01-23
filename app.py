@@ -12,12 +12,14 @@ import time
 from influxdb_client import InfluxDBClient, Point
 from influxdb_client.client.write_api import SYNCHRONOUS
 from dotenv import load_dotenv
+from watchdog.observers import Observer
+from watchdog.events import FileSystemEventHandler
 
 load_dotenv()  # Load environment variables from .env file
 
 ### Config section
 # Path to the local export file
-LOCAL_PATH = os.getenv("LOCAL_PATH")
+LOCAL_PATH = os.getenv("LOCAL_PATH", 'F:\\Gadgetbridge\\Gadgetbridge.db')
 
 # How far back in time should we query when extracting stats?
 QUERY_DURATION = int(os.getenv("QUERY_DURATION", 86400))
@@ -341,12 +343,25 @@ def write_results(results):
                     except Exception as e:
                         print(f"Failed to write wakeup point: {p_wakeup}, error: {e}")
 
-if __name__ == "__main__":
-    print("Starting script...")
-    if not INFLUXDB_URL:
-        print("Error: INFLUXDB_URL not set in environment")
-        sys.exit(1)
+def monitor_file(file_path, sync_function, poll_interval=1):
+    last_modified = os.path.getmtime(file_path)
+    
+    while True:
+        try:
+            current_modified = os.path.getmtime(file_path)
+            
+            if current_modified != last_modified:
+                print(f"File {file_path} modified. Running sync job...")
+                sync_function()
+                last_modified = current_modified
+            
+            time.sleep(poll_interval)
+        
+        except Exception as e:
+            print(f"Error monitoring file: {e}")
+            break
 
+def run_sync_job():
     tempdir = fetch_database()
     print(f"Fetched database to temporary directory: {tempdir}")
     conn, cur = open_database(tempdir)
@@ -356,7 +371,7 @@ if __name__ == "__main__":
     results = extract_data(cur)
     if not results:
         print("Data extraction failed")
-        sys.exit(1)
+        return
 
     print(f"Extracted {len(results)} data points")
 
@@ -371,3 +386,19 @@ if __name__ == "__main__":
         print(f"Removed temporary directory: {tempdir}")
     elif REMOVE_TEMP_DB == "N":
         print(f"Temporary directory retained: {tempdir}")
+
+if __name__ == "__main__":
+    print("Starting script...")
+    if not INFLUXDB_URL:
+        print("Error: INFLUXDB_URL not set in environment")
+        sys.exit(1)
+
+    print("Checking LOCAL_PATH directory...")
+    # Ensure the LOCAL_PATH directory exists
+    if not os.path.exists(os.path.dirname(LOCAL_PATH)):
+        print(f"Error: Directory {os.path.dirname(LOCAL_PATH)} does not exist")
+        sys.exit(1)
+
+    print("Starting file monitoring...")
+    monitor_file(LOCAL_PATH, run_sync_job)
+    print("Script terminated.")
