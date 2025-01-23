@@ -19,7 +19,7 @@ load_dotenv()  # Load environment variables from .env file
 
 ### Config section
 # Path to the local export file
-LOCAL_PATH = os.getenv("LOCAL_PATH")
+LOCAL_PATH = os.getenv("LOCAL_PATH", 'F:\\Gadgetbridge\\Gadgetbridge.db')
 
 # How far back in time should we query when extracting stats?
 QUERY_DURATION = int(os.getenv("QUERY_DURATION", 86400))
