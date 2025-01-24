@@ -374,10 +374,20 @@ def write_results(results, debug=True):  # Changed to True by default
                     print(f"Point details: {p}")
 
 def monitor_file(file_path, sync_function, poll_interval=1):
-    last_modified = os.path.getmtime(file_path)
-    
+    import os
+    import time
+
+    last_modified = 0
+    print(f"Starting file monitoring for: {file_path}")
+
     while True:
         try:
+            # Ensure file exists before checking modification time
+            if not os.path.exists(file_path):
+                print(f"File {file_path} does not exist. Waiting...")
+                time.sleep(poll_interval)
+                continue
+
             current_modified = os.path.getmtime(file_path)
             
             if current_modified != last_modified:
@@ -389,7 +399,7 @@ def monitor_file(file_path, sync_function, poll_interval=1):
         
         except Exception as e:
             print(f"Error monitoring file: {e}")
-            break
+            time.sleep(poll_interval)
 
 def run_sync_job(debug=False):
     tempdir = fetch_database()
