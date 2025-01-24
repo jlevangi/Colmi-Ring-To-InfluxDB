@@ -9,6 +9,7 @@ import sqlite3
 import sys
 import tempfile
 import time
+import argparse
 from influxdb_client import InfluxDBClient, Point
 from influxdb_client.client.write_api import SYNCHRONOUS
 from dotenv import load_dotenv
@@ -19,7 +20,7 @@ load_dotenv()  # Load environment variables from .env file
 
 ### Config section
 # Path to the local export file
-LOCAL_PATH = os.getenv("LOCAL_PATH", 'F:\\Gadgetbridge\\Gadgetbridge.db')
+LOCAL_PATH = os.getenv("LOCAL_PATH")
 
 # How far back in time should we query when extracting stats?
 QUERY_DURATION = int(os.getenv("QUERY_DURATION", 86400))
@@ -236,6 +237,9 @@ def extract_data(cur):
             devices_observed[f"dev-{r[1]}"] = row_ts
 
     print("Activity data points:", len(results))
+    for row in results:
+        if "activity_steps" in row["fields"]:
+            print(f"Activity data row: {row}")
 
     # Get SPO2 data
     print("Querying SPO2 data...")
@@ -310,7 +314,6 @@ def extract_data(cur):
     return results
 
 def write_results(results):
-    '''Open a connection to InfluxDB and write the results'''
     print("Connecting to InfluxDB...")
     with InfluxDBClient(url=INFLUXDB_URL, token=INFLUXDB_TOKEN, org=INFLUXDB_ORG) as _client:
         with _client.write_api(write_options=SYNCHRONOUS) as _write_client:
@@ -320,9 +323,10 @@ def write_results(results):
                     p = p.tag(tag, row['tags'][tag])
                     
                 for field in row['fields']:
-                    if row['fields'][field] == -1:
+                    if field in ['activity_steps', 'activity_distance', 'activity_calories'] and row['fields'][field] == -1:
                         continue
-                    p = p.field(field, row['fields'][field])
+                    else:
+                        p = p.field(field, row['fields'][field])
                     
                 p = p.time(row['timestamp'])
                 try:
@@ -330,7 +334,7 @@ def write_results(results):
                     print(f"Successfully wrote point: {p}")
                 except Exception as e:
                     print(f"Failed to write point: {p}, error: {e}")
-                
+
                 # Write wakeup time as a separate point
                 if 'wakeup_time' in row['fields']:
                     p_wakeup = Point(INFLUXDB_MEASUREMENT)
@@ -389,6 +393,11 @@ def run_sync_job():
 
 if __name__ == "__main__":
     print("Starting script...")
+    
+    parser = argparse.ArgumentParser(description="Process smart ring stats and write to InfluxDB.")
+    parser.add_argument("--now", action="store_true", help="Start the process immediately instead of waiting for a file update")
+    args = parser.parse_args()
+
     if not INFLUXDB_URL:
         print("Error: INFLUXDB_URL not set in environment")
         sys.exit(1)
@@ -399,6 +408,11 @@ if __name__ == "__main__":
         print(f"Error: Directory {os.path.dirname(LOCAL_PATH)} does not exist")
         sys.exit(1)
 
-    print("Starting file monitoring...")
-    monitor_file(LOCAL_PATH, run_sync_job)
+    if args.now:
+        print("Starting sync job immediately...")
+        run_sync_job()
+    else:
+        print("Starting file monitoring...")
+        monitor_file(LOCAL_PATH, run_sync_job)
+    
     print("Script terminated.")
