@@ -79,21 +79,21 @@ def extract_data(cur, debug=False):
 
     # Get stress level data
     print("Querying stress level data...")
-    data_query = ("SELECT TIMESTAMP, DEVICE_ID, STRESS FROM COLMI_STRESS_SAMPLE "
+    data_query = ("SELECT TIMESTAMP, DEVICE_ID, LEVEL, BATTERY_INDEX FROM BATTERY_LEVEL "
         f"WHERE TIMESTAMP >= {query_start_bound} "
-        "AND DEVICE_ID IN (" + ",".join([k.split('-')[1] for k in devices.keys()]) + ") "
         "ORDER BY TIMESTAMP ASC")
-    
+
     res = cur.execute(data_query)
     for r in res.fetchall():
-        row_ts = r[0] * 1000000  # Convert to nanoseconds
+        row_ts = r[0] * 1000000000  # Convert to nanoseconds
         row = {
                 "timestamp": row_ts,
                 "fields" : {
-                    "stress_level" : r[2]
+                    "battery_level" : r[2]
                 },
                 "tags" : {
-                    "device" : devices[f"dev-{r[1]}"]
+                    "device" : devices[f"dev-{r[1]}"],
+                    "battery" : r[3]
                 }
         }
         results.append(row)
@@ -111,7 +111,7 @@ def extract_data(cur, debug=False):
 
     res = cur.execute(data_query)
     for r in res.fetchall():
-        row_ts = r[0] * 1000000  # Convert to nanoseconds
+        row_ts = r[0] * 1000000
         row = {
                 "timestamp": row_ts,
                 "fields" : {
@@ -122,6 +122,8 @@ def extract_data(cur, debug=False):
                 }
         }
         results.append(row)
+        if debug:
+            print(f"Extracted battery level data: {row}")
         if f"dev-{r[1]}" not in devices_observed or devices_observed[f"dev-{r[1]}"] < row_ts:
             devices_observed[f"dev-{r[1]}"] = row_ts
 
@@ -240,12 +242,11 @@ def extract_data(cur, debug=False):
     print("Querying activity data...")
     data_query = ("SELECT TIMESTAMP, DEVICE_ID, STEPS, DISTANCE, CALORIES FROM COLMI_ACTIVITY_SAMPLE "
         f"WHERE TIMESTAMP >= {query_start_bound} "
-        "AND DEVICE_ID IN (" + ",".join([k.split('-')[1] for k in devices.keys()]) + ") "
         "ORDER BY TIMESTAMP ASC")
 
     res = cur.execute(data_query)
     for r in res.fetchall():
-        row_ts = r[0] * 1000000  # Convert to nanoseconds
+        row_ts = r[0] * 1000000000  # Convert to nanoseconds
         row = {
                 "timestamp": row_ts,
                 "fields" : {
@@ -254,10 +255,13 @@ def extract_data(cur, debug=False):
                     "activity_calories" : r[4]
                 },
                 "tags" : {
-                    "device" : devices[f"dev-{r[1]}"]
+                    "device" : devices[f"dev-{r[1]}"],
+                    "sample_type" : "activity"
                 }
         }
         results.append(row)
+    if f"dev-{r[1]}" not in devices_observed or devices_observed[f"dev-{r[1]}"] < row_ts:
+        devices_observed[f"dev-{r[1]}"] = row_ts
         if f"dev-{r[1]}" not in devices_observed or devices_observed[f"dev-{r[1]}"] < row_ts:
             devices_observed[f"dev-{r[1]}"] = row_ts
 
@@ -339,41 +343,36 @@ def extract_data(cur, debug=False):
 
     return results
 
-def write_results(results, debug=False):
-    print("Connecting to InfluxDB...")
+def write_results(results, debug=True):  # Changed to True by default
+    print(f"Total results to write: {len(results)}")
     with InfluxDBClient(url=INFLUXDB_URL, token=INFLUXDB_TOKEN, org=INFLUXDB_ORG) as _client:
         with _client.write_api(write_options=SYNCHRONOUS) as _write_client:
-            for row in results:
+            for idx, row in enumerate(results, 1):
                 p = Point(INFLUXDB_MEASUREMENT)
+                
+                # Add all tags
                 for tag in row['tags']:
                     p = p.tag(tag, row['tags'][tag])
-                    
-                for field in row['fields']:
-                    if field in ['activity_steps', 'activity_distance', 'activity_calories'] and row['fields'][field] == -1:
-                        continue
+                
+                # Add all fields with type checking
+                for field, value in row['fields'].items():
+                    # Explicitly convert to appropriate type if needed
+                    if isinstance(value, (int, float, str)):
+                        p = p.field(field, value)
                     else:
-                        p = p.field(field, row['fields'][field])
-                    
+                        print(f"Skipping field {field} with unexpected type: {type(value)}")
+                
+                # Set timestamp
                 p = p.time(row['timestamp'])
+                
+                print(f"Preparing point {idx}: {p}")
+                
                 try:
                     _write_client.write(INFLUXDB_BUCKET, INFLUXDB_ORG, p)
-                    if debug:
-                        print(f"Successfully wrote point: {p}")
+                    print(f"Successfully wrote point {idx}")
                 except Exception as e:
-                    print(f"Failed to write point: {p}, error: {e}")
-
-                # Write wakeup time as a separate point
-                if 'wakeup_time' in row['fields']:
-                    p_wakeup = Point(INFLUXDB_MEASUREMENT)
-                    p_wakeup = p_wakeup.tag("device", row['tags']['device'])
-                    p_wakeup = p_wakeup.field("wakeup_time", row['fields']['wakeup_time'])
-                    p_wakeup = p_wakeup.time(row['fields']['wakeup_time'])
-                    try:
-                        _write_client.write(INFLUXDB_BUCKET, INFLUXDB_ORG, p_wakeup)
-                        if debug:
-                            print(f"Successfully wrote wakeup point: {p_wakeup}")
-                    except Exception as e:
-                        print(f"Failed to write wakeup point: {p_wakeup}, error: {e}")
+                    print(f"Failed to write point {idx}: {e}")
+                    print(f"Point details: {p}")
 
 def monitor_file(file_path, sync_function, poll_interval=1):
     last_modified = os.path.getmtime(file_path)
