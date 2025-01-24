@@ -51,7 +51,7 @@ def open_database(tempdir):
     cur = conn.cursor()
     return conn, cur
 
-def extract_data(cur):
+def extract_data(cur, debug=False):
     '''Query the database for smart ring data'''
     results = []
     devices = {}
@@ -101,6 +101,31 @@ def extract_data(cur):
             devices_observed[f"dev-{r[1]}"] = row_ts
 
     print("Stress level data points:", len(results))
+
+    # Get battery level data
+    print("Querying battery level data...")
+    data_query = ("SELECT TIMESTAMP, DEVICE_ID, LEVEL FROM BATTERY_LEVEL "
+        f"WHERE TIMESTAMP >= {query_start_bound} "
+        "AND DEVICE_ID IN (" + ",".join([k.split('-')[1] for k in devices.keys()]) + ") "
+        "ORDER BY TIMESTAMP ASC")
+
+    res = cur.execute(data_query)
+    for r in res.fetchall():
+        row_ts = r[0] * 1000000  # Convert to nanoseconds
+        row = {
+                "timestamp": row_ts,
+                "fields" : {
+                    "battery_level" : r[2]
+                },
+                "tags" : {
+                    "device" : devices[f"dev-{r[1]}"]
+                }
+        }
+        results.append(row)
+        if f"dev-{r[1]}" not in devices_observed or devices_observed[f"dev-{r[1]}"] < row_ts:
+            devices_observed[f"dev-{r[1]}"] = row_ts
+
+    print("Battery level data points:", len(results))
 
     # Get sleep session data
     print("Querying sleep session data...")
@@ -237,9 +262,10 @@ def extract_data(cur):
             devices_observed[f"dev-{r[1]}"] = row_ts
 
     print("Activity data points:", len(results))
-    for row in results:
-        if "activity_steps" in row["fields"]:
-            print(f"Activity data row: {row}")
+    if debug:
+        for row in results:
+            if "activity_steps" in row["fields"]:
+                print(f"Activity data row: {row}")
 
     # Get SPO2 data
     print("Querying SPO2 data...")
@@ -313,7 +339,7 @@ def extract_data(cur):
 
     return results
 
-def write_results(results):
+def write_results(results, debug=False):
     print("Connecting to InfluxDB...")
     with InfluxDBClient(url=INFLUXDB_URL, token=INFLUXDB_TOKEN, org=INFLUXDB_ORG) as _client:
         with _client.write_api(write_options=SYNCHRONOUS) as _write_client:
@@ -331,7 +357,8 @@ def write_results(results):
                 p = p.time(row['timestamp'])
                 try:
                     _write_client.write(INFLUXDB_BUCKET, INFLUXDB_ORG, p)
-                    print(f"Successfully wrote point: {p}")
+                    if debug:
+                        print(f"Successfully wrote point: {p}")
                 except Exception as e:
                     print(f"Failed to write point: {p}, error: {e}")
 
@@ -343,7 +370,8 @@ def write_results(results):
                     p_wakeup = p_wakeup.time(row['fields']['wakeup_time'])
                     try:
                         _write_client.write(INFLUXDB_BUCKET, INFLUXDB_ORG, p_wakeup)
-                        print(f"Successfully wrote wakeup point: {p_wakeup}")
+                        if debug:
+                            print(f"Successfully wrote wakeup point: {p_wakeup}")
                     except Exception as e:
                         print(f"Failed to write wakeup point: {p_wakeup}, error: {e}")
 
@@ -365,14 +393,14 @@ def monitor_file(file_path, sync_function, poll_interval=1):
             print(f"Error monitoring file: {e}")
             break
 
-def run_sync_job():
+def run_sync_job(debug=False):
     tempdir = fetch_database()
     print(f"Fetched database to temporary directory: {tempdir}")
     conn, cur = open_database(tempdir)
     print("Opened database connection")
 
     # Extract data from the DB
-    results = extract_data(cur)
+    results = extract_data(cur, debug)
     if not results:
         print("Data extraction failed")
         return
@@ -380,7 +408,7 @@ def run_sync_job():
     print(f"Extracted {len(results)} data points")
 
     # Write out to InfluxDB
-    write_results(results)
+    write_results(results, debug)
     
     # Tidy up
     conn.close()
@@ -396,6 +424,7 @@ if __name__ == "__main__":
     
     parser = argparse.ArgumentParser(description="Process smart ring stats and write to InfluxDB.")
     parser.add_argument("--now", action="store_true", help="Start the process immediately instead of waiting for a file update")
+    parser.add_argument("--debug", action="store_true", help="Print detailed debug information")
     args = parser.parse_args()
 
     if not INFLUXDB_URL:
@@ -410,9 +439,9 @@ if __name__ == "__main__":
 
     if args.now:
         print("Starting sync job immediately...")
-        run_sync_job()
+        run_sync_job(args.debug)
     else:
         print("Starting file monitoring...")
-        monitor_file(LOCAL_PATH, run_sync_job)
+        monitor_file(LOCAL_PATH, lambda: run_sync_job(args.debug))
     
     print("Script terminated.")
