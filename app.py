@@ -9,6 +9,7 @@ import sqlite3
 import sys
 import tempfile
 import time
+import argparse
 from influxdb_client import InfluxDBClient, Point
 from influxdb_client.client.write_api import SYNCHRONOUS
 from dotenv import load_dotenv
@@ -19,7 +20,7 @@ load_dotenv()  # Load environment variables from .env file
 
 ### Config section
 # Path to the local export file
-LOCAL_PATH = os.getenv("LOCAL_PATH", 'F:\\Gadgetbridge\\Gadgetbridge.db')
+LOCAL_PATH = os.getenv("LOCAL_PATH")
 
 # How far back in time should we query when extracting stats?
 QUERY_DURATION = int(os.getenv("QUERY_DURATION", 86400))
@@ -50,7 +51,7 @@ def open_database(tempdir):
     cur = conn.cursor()
     return conn, cur
 
-def extract_data(cur):
+def extract_data(cur, debug=False):
     '''Query the database for smart ring data'''
     results = []
     devices = {}
@@ -78,21 +79,21 @@ def extract_data(cur):
 
     # Get stress level data
     print("Querying stress level data...")
-    data_query = ("SELECT TIMESTAMP, DEVICE_ID, STRESS FROM COLMI_STRESS_SAMPLE "
+    data_query = ("SELECT TIMESTAMP, DEVICE_ID, LEVEL, BATTERY_INDEX FROM BATTERY_LEVEL "
         f"WHERE TIMESTAMP >= {query_start_bound} "
-        "AND DEVICE_ID IN (" + ",".join([k.split('-')[1] for k in devices.keys()]) + ") "
         "ORDER BY TIMESTAMP ASC")
-    
+
     res = cur.execute(data_query)
     for r in res.fetchall():
-        row_ts = r[0] * 1000000  # Convert to nanoseconds
+        row_ts = r[0] * 1000000000  # Convert to nanoseconds
         row = {
                 "timestamp": row_ts,
                 "fields" : {
-                    "stress_level" : r[2]
+                    "battery_level" : r[2]
                 },
                 "tags" : {
-                    "device" : devices[f"dev-{r[1]}"]
+                    "device" : devices[f"dev-{r[1]}"],
+                    "battery" : r[3]
                 }
         }
         results.append(row)
@@ -100,6 +101,33 @@ def extract_data(cur):
             devices_observed[f"dev-{r[1]}"] = row_ts
 
     print("Stress level data points:", len(results))
+
+    # Get battery level data
+    print("Querying battery level data...")
+    data_query = ("SELECT TIMESTAMP, DEVICE_ID, LEVEL FROM BATTERY_LEVEL "
+        f"WHERE TIMESTAMP >= {query_start_bound} "
+        "AND DEVICE_ID IN (" + ",".join([k.split('-')[1] for k in devices.keys()]) + ") "
+        "ORDER BY TIMESTAMP ASC")
+
+    res = cur.execute(data_query)
+    for r in res.fetchall():
+        row_ts = r[0] * 1000000
+        row = {
+                "timestamp": row_ts,
+                "fields" : {
+                    "battery_level" : r[2]
+                },
+                "tags" : {
+                    "device" : devices[f"dev-{r[1]}"]
+                }
+        }
+        results.append(row)
+        if debug:
+            print(f"Extracted battery level data: {row}")
+        if f"dev-{r[1]}" not in devices_observed or devices_observed[f"dev-{r[1]}"] < row_ts:
+            devices_observed[f"dev-{r[1]}"] = row_ts
+
+    print("Battery level data points:", len(results))
 
     # Get sleep session data
     print("Querying sleep session data...")
@@ -214,12 +242,11 @@ def extract_data(cur):
     print("Querying activity data...")
     data_query = ("SELECT TIMESTAMP, DEVICE_ID, STEPS, DISTANCE, CALORIES FROM COLMI_ACTIVITY_SAMPLE "
         f"WHERE TIMESTAMP >= {query_start_bound} "
-        "AND DEVICE_ID IN (" + ",".join([k.split('-')[1] for k in devices.keys()]) + ") "
         "ORDER BY TIMESTAMP ASC")
 
     res = cur.execute(data_query)
     for r in res.fetchall():
-        row_ts = r[0] * 1000000  # Convert to nanoseconds
+        row_ts = r[0] * 1000000000  # Convert to nanoseconds
         row = {
                 "timestamp": row_ts,
                 "fields" : {
@@ -228,14 +255,21 @@ def extract_data(cur):
                     "activity_calories" : r[4]
                 },
                 "tags" : {
-                    "device" : devices[f"dev-{r[1]}"]
+                    "device" : devices[f"dev-{r[1]}"],
+                    "sample_type" : "activity"
                 }
         }
         results.append(row)
+    if f"dev-{r[1]}" not in devices_observed or devices_observed[f"dev-{r[1]}"] < row_ts:
+        devices_observed[f"dev-{r[1]}"] = row_ts
         if f"dev-{r[1]}" not in devices_observed or devices_observed[f"dev-{r[1]}"] < row_ts:
             devices_observed[f"dev-{r[1]}"] = row_ts
 
     print("Activity data points:", len(results))
+    if debug:
+        for row in results:
+            if "activity_steps" in row["fields"]:
+                print(f"Activity data row: {row}")
 
     # Get SPO2 data
     print("Querying SPO2 data...")
@@ -309,39 +343,36 @@ def extract_data(cur):
 
     return results
 
-def write_results(results):
-    '''Open a connection to InfluxDB and write the results'''
-    print("Connecting to InfluxDB...")
+def write_results(results, debug=True):  # Changed to True by default
+    print(f"Total results to write: {len(results)}")
     with InfluxDBClient(url=INFLUXDB_URL, token=INFLUXDB_TOKEN, org=INFLUXDB_ORG) as _client:
         with _client.write_api(write_options=SYNCHRONOUS) as _write_client:
-            for row in results:
+            for idx, row in enumerate(results, 1):
                 p = Point(INFLUXDB_MEASUREMENT)
+                
+                # Add all tags
                 for tag in row['tags']:
                     p = p.tag(tag, row['tags'][tag])
-                    
-                for field in row['fields']:
-                    if row['fields'][field] == -1:
-                        continue
-                    p = p.field(field, row['fields'][field])
-                    
+                
+                # Add all fields with type checking
+                for field, value in row['fields'].items():
+                    # Explicitly convert to appropriate type if needed
+                    if isinstance(value, (int, float, str)):
+                        p = p.field(field, value)
+                    else:
+                        print(f"Skipping field {field} with unexpected type: {type(value)}")
+                
+                # Set timestamp
                 p = p.time(row['timestamp'])
+                
+                print(f"Preparing point {idx}: {p}")
+                
                 try:
                     _write_client.write(INFLUXDB_BUCKET, INFLUXDB_ORG, p)
-                    print(f"Successfully wrote point: {p}")
+                    print(f"Successfully wrote point {idx}")
                 except Exception as e:
-                    print(f"Failed to write point: {p}, error: {e}")
-                
-                # Write wakeup time as a separate point
-                if 'wakeup_time' in row['fields']:
-                    p_wakeup = Point(INFLUXDB_MEASUREMENT)
-                    p_wakeup = p_wakeup.tag("device", row['tags']['device'])
-                    p_wakeup = p_wakeup.field("wakeup_time", row['fields']['wakeup_time'])
-                    p_wakeup = p_wakeup.time(row['fields']['wakeup_time'])
-                    try:
-                        _write_client.write(INFLUXDB_BUCKET, INFLUXDB_ORG, p_wakeup)
-                        print(f"Successfully wrote wakeup point: {p_wakeup}")
-                    except Exception as e:
-                        print(f"Failed to write wakeup point: {p_wakeup}, error: {e}")
+                    print(f"Failed to write point {idx}: {e}")
+                    print(f"Point details: {p}")
 
 def monitor_file(file_path, sync_function, poll_interval=1):
     last_modified = os.path.getmtime(file_path)
@@ -361,14 +392,14 @@ def monitor_file(file_path, sync_function, poll_interval=1):
             print(f"Error monitoring file: {e}")
             break
 
-def run_sync_job():
+def run_sync_job(debug=False):
     tempdir = fetch_database()
     print(f"Fetched database to temporary directory: {tempdir}")
     conn, cur = open_database(tempdir)
     print("Opened database connection")
 
     # Extract data from the DB
-    results = extract_data(cur)
+    results = extract_data(cur, debug)
     if not results:
         print("Data extraction failed")
         return
@@ -376,7 +407,7 @@ def run_sync_job():
     print(f"Extracted {len(results)} data points")
 
     # Write out to InfluxDB
-    write_results(results)
+    write_results(results, debug)
     
     # Tidy up
     conn.close()
@@ -389,6 +420,12 @@ def run_sync_job():
 
 if __name__ == "__main__":
     print("Starting script...")
+    
+    parser = argparse.ArgumentParser(description="Process smart ring stats and write to InfluxDB.")
+    parser.add_argument("--now", action="store_true", help="Start the process immediately instead of waiting for a file update")
+    parser.add_argument("--debug", action="store_true", help="Print detailed debug information")
+    args = parser.parse_args()
+
     if not INFLUXDB_URL:
         print("Error: INFLUXDB_URL not set in environment")
         sys.exit(1)
@@ -399,6 +436,11 @@ if __name__ == "__main__":
         print(f"Error: Directory {os.path.dirname(LOCAL_PATH)} does not exist")
         sys.exit(1)
 
-    print("Starting file monitoring...")
-    monitor_file(LOCAL_PATH, run_sync_job)
+    if args.now:
+        print("Starting sync job immediately...")
+        run_sync_job(args.debug)
+    else:
+        print("Starting file monitoring...")
+        monitor_file(LOCAL_PATH, lambda: run_sync_job(args.debug))
+    
     print("Script terminated.")
