@@ -374,8 +374,6 @@ def write_results(results, debug=True):  # Changed to True by default
                     print(f"Point details: {p}")
 
 def monitor_file(file_path, sync_function, poll_interval=1):
-    import os
-    import time
 
     last_modified = 0
     print(f"Starting file monitoring for: {file_path}")
