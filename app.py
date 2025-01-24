@@ -79,6 +79,31 @@ def extract_data(cur, debug=False):
 
     # Get stress level data
     print("Querying stress level data...")
+    data_query = ("SELECT TIMESTAMP, DEVICE_ID, STRESS FROM COLMI_STRESS_SAMPLE "
+        f"WHERE TIMESTAMP >= {query_start_bound} "
+        "AND DEVICE_ID IN (" + ",".join([k.split('-')[1] for k in devices.keys()]) + ") "
+        "ORDER BY TIMESTAMP ASC")
+    
+    res = cur.execute(data_query)
+    for r in res.fetchall():
+        row_ts = r[0] * 1000000  # Convert to nanoseconds
+        row = {
+                "timestamp": row_ts,
+                "fields" : {
+                    "stress_level" : r[2]
+                },
+                "tags" : {
+                    "device" : devices[f"dev-{r[1]}"]
+                }
+        }
+        results.append(row)
+        if f"dev-{r[1]}" not in devices_observed or devices_observed[f"dev-{r[1]}"] < row_ts:
+            devices_observed[f"dev-{r[1]}"] = row_ts
+
+    print("Stress level data points:", len(results))
+
+    # Get battery level data
+    print("Querying battery level data...")
     data_query = ("SELECT TIMESTAMP, DEVICE_ID, LEVEL, BATTERY_INDEX FROM BATTERY_LEVEL "
         f"WHERE TIMESTAMP >= {query_start_bound} "
         "ORDER BY TIMESTAMP ASC")
@@ -94,31 +119,6 @@ def extract_data(cur, debug=False):
                 "tags" : {
                     "device" : devices[f"dev-{r[1]}"],
                     "battery" : r[3]
-                }
-        }
-        results.append(row)
-        if f"dev-{r[1]}" not in devices_observed or devices_observed[f"dev-{r[1]}"] < row_ts:
-            devices_observed[f"dev-{r[1]}"] = row_ts
-
-    print("Stress level data points:", len(results))
-
-    # Get battery level data
-    print("Querying battery level data...")
-    data_query = ("SELECT TIMESTAMP, DEVICE_ID, LEVEL FROM BATTERY_LEVEL "
-        f"WHERE TIMESTAMP >= {query_start_bound} "
-        "AND DEVICE_ID IN (" + ",".join([k.split('-')[1] for k in devices.keys()]) + ") "
-        "ORDER BY TIMESTAMP ASC")
-
-    res = cur.execute(data_query)
-    for r in res.fetchall():
-        row_ts = r[0] * 1000000
-        row = {
-                "timestamp": row_ts,
-                "fields" : {
-                    "battery_level" : r[2]
-                },
-                "tags" : {
-                    "device" : devices[f"dev-{r[1]}"]
                 }
         }
         results.append(row)
@@ -240,28 +240,27 @@ def extract_data(cur, debug=False):
 
     # Get activity data
     print("Querying activity data...")
-    data_query = ("SELECT TIMESTAMP, DEVICE_ID, STEPS, DISTANCE, CALORIES FROM COLMI_ACTIVITY_SAMPLE "
+    data_query = ("SELECT TIMESTAMP, DEVICE_ID, STEPS, CALORIES, DISTANCE, RAW_KIND FROM COLMI_ACTIVITY_SAMPLE "
         f"WHERE TIMESTAMP >= {query_start_bound} "
+        "AND DEVICE_ID IN (" + ",".join([k.split('-')[1] for k in devices.keys()]) + ") "
         "ORDER BY TIMESTAMP ASC")
 
     res = cur.execute(data_query)
     for r in res.fetchall():
-        row_ts = r[0] * 1000000000  # Convert to nanoseconds
+        row_ts = r[0] * 1000000  # Convert to nanoseconds
         row = {
-                "timestamp": row_ts,
-                "fields" : {
-                    "activity_steps" : r[2],
-                    "activity_distance" : r[3],
-                    "activity_calories" : r[4]
-                },
-                "tags" : {
-                    "device" : devices[f"dev-{r[1]}"],
-                    "sample_type" : "activity"
-                }
+            "timestamp": row_ts,
+            "fields" : {
+                "activity_steps" : r[2],
+                "activity_calories" : r[3],
+                "activity_distance" : r[4],
+                "raw_kind" : r[5]
+            },
+            "tags" : {
+                "device" : devices[f"dev-{r[1]}"]
+            }
         }
         results.append(row)
-    if f"dev-{r[1]}" not in devices_observed or devices_observed[f"dev-{r[1]}"] < row_ts:
-        devices_observed[f"dev-{r[1]}"] = row_ts
         if f"dev-{r[1]}" not in devices_observed or devices_observed[f"dev-{r[1]}"] < row_ts:
             devices_observed[f"dev-{r[1]}"] = row_ts
 
