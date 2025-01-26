@@ -2,6 +2,7 @@
 import os
 import sys
 import argparse
+import shutil
 from modules.config import load_config
 from modules.database import fetch_database, open_database
 from modules.extractor import extract_data
