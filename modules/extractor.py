@@ -1,5 +1,6 @@
 import time
 import os
+import sqlite3
 
 def extract_data(cur, debug=False):
     '''Query the database for smart ring data'''
@@ -210,6 +211,8 @@ def extract_data(cur, debug=False):
             }
         }
         results.append(row)
+        if debug:
+            print(f"Extracted activity data: {row}")
         if f"dev-{r[1]}" not in devices_observed or devices_observed[f"dev-{r[1]}"] < row_ts:
             devices_observed[f"dev-{r[1]}"] = row_ts
 

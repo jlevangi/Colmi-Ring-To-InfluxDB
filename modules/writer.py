@@ -29,11 +29,13 @@ def write_results(results, debug=True):
                 # Set timestamp
                 p = p.time(row['timestamp'])
                 
-                print(f"Preparing point {idx}: {p}")
+                if debug:
+                    print(f"Preparing point {idx}: {p}")
                 
                 try:
                     _write_client.write(INFLUXDB_BUCKET, INFLUXDB_ORG, p)
-                    print(f"Successfully wrote point {idx}")
+                    if debug:
+                        print(f"Successfully wrote point {idx}")
                 except Exception as e:
                     print(f"Failed to write point {idx}: {e}")
                     print(f"Point details: {p}")
