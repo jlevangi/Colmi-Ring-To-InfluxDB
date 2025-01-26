@@ -197,22 +197,24 @@ def extract_data(cur, debug=False):
 
     res = cur.execute(data_query)
     for r in res.fetchall():
-        row_ts = r[0] * 1000000  # Convert to nanoseconds
+        row_ts = r[0] * 1000000000  # Convert to nanoseconds
         row = {
             "timestamp": row_ts,
-            "fields" : {
-                "activity_steps" : r[2],
-                "activity_calories" : r[3],
-                "activity_distance" : r[4],
-                "raw_kind" : r[5]
+            "fields": {
+                "activity_steps": r[2],
+                "activity_calories": r[3],
+                "activity_distance": r[4]
             },
-            "tags" : {
-                "device" : devices[f"dev-{r[1]}"]
+            "tags": {
+                "device": devices[f"dev-{r[1]}"],
+                "activity_kind": r[5],
+                "sample_type": "activity"
             }
         }
         results.append(row)
         if debug:
             print(f"Extracted activity data: {row}")
+            print(f"Activity data timestamp: {row_ts}")
         if f"dev-{r[1]}" not in devices_observed or devices_observed[f"dev-{r[1]}"] < row_ts:
             devices_observed[f"dev-{r[1]}"] = row_ts
 

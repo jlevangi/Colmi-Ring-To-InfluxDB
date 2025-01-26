@@ -31,11 +31,21 @@ def write_results(results, debug=True):
                 
                 if debug:
                     print(f"Preparing point {idx}: {p}")
+                    print(f"Point timestamp: {row['timestamp']}")
+                    if "activity_steps" in row['fields']:
+                        print(f"Activity point {idx} timestamp: {row['timestamp']}")
+                        print(f"Activity point details: {row}")
                 
                 try:
-                    _write_client.write(INFLUXDB_BUCKET, INFLUXDB_ORG, p)
+                    response = _write_client.write(INFLUXDB_BUCKET, INFLUXDB_ORG, p)
                     if debug:
                         print(f"Successfully wrote point {idx}")
+                        if "activity_steps" in row['fields']:
+                            print(f"Successfully wrote activity point {idx}")
+                            print(f"InfluxDB response: {response}")
                 except Exception as e:
                     print(f"Failed to write point {idx}: {e}")
                     print(f"Point details: {p}")
+                    if "activity_steps" in row['fields']:
+                        print(f"Failed to write activity point {idx}: {e}")
+                        print(f"Activity point details: {p}")
