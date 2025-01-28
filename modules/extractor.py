@@ -140,7 +140,7 @@ def extract_data(cur, debug=False):
 
     # Get sleep stage data
     print("Querying sleep stage data...")
-    data_query = ("SELECT TIMESTAMP, DEVICE_ID, STAGE FROM COLMI_SLEEP_STAGE_SAMPLE "
+    data_query = ("SELECT TIMESTAMP, DEVICE_ID, STAGE, DURATION FROM COLMI_SLEEP_STAGE_SAMPLE "
         f"WHERE TIMESTAMP >= {query_start_bound} "
         "AND DEVICE_ID IN (" + ",".join([k.split('-')[1] for k in devices.keys()]) + ") "
         "ORDER BY TIMESTAMP ASC")
@@ -148,14 +148,19 @@ def extract_data(cur, debug=False):
     res = cur.execute(data_query)
     for r in res.fetchall():
         row_ts = r[0] * 1000000  # Convert to nanoseconds
+        device_id = f"dev-{r[1]}"
+        stage = r[2]
+        duration = r[3] * 60 * 1000000000  # Convert minutes to nanoseconds
+        
         row = {
-                "timestamp": row_ts,
-                "fields" : {
-                    "sleep_stage" : r[2]
-                },
-                "tags" : {
-                    "device" : devices[f"dev-{r[1]}"]
-                }
+            "timestamp": row_ts,
+            "fields": {
+                "sleep_stage": stage,
+                "sleep_stage_duration": duration
+            },
+            "tags": {
+                "device": devices[device_id]
+            }
         }
         results.append(row)
         if f"dev-{r[1]}" not in devices_observed or devices_observed[f"dev-{r[1]}"] < row_ts:
