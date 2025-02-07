@@ -10,8 +10,8 @@ def extract_data(cur, debug=False):
     query_start_bound = int(time.time()) - int(os.getenv("QUERY_DURATION", 86400))
     query_start_bound_ms = query_start_bound * 1000
 
-    # Pull out device names (focusing on Colmi ring)
-    device_query = "select _id, NAME from DEVICE where NAME LIKE '%Colmi%'"
+    # Pull out device names
+    device_query = "select _id, NAME from DEVICE"
     try:
         res = cur.execute(device_query)
     except sqlite3.OperationalError as e:
